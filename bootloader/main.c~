@@ -1,0 +1,69 @@
+/* 
+ * Nelson Sapalo da Silva Cole
+ * (nelsoncole72@gmail.com)
+ * Lubango, 2017-2018.
+ *
+ * 
+ */
+#include <boot.h>
+#include <ata.h>
+#include <fs.h>
+#include <gui/gui.h>
+#include <typedef.h>
+
+#define VIRTUAL_MEMORY 0xC0000000
+#define PHYSICAL_MEMORY 0x400000
+
+extern uint16_t IOADDR0,IOADDR1;
+extern uint8_t BootDevice;
+extern void   exet_kernel_i386();
+
+uint8_t *buffer=(uint8_t *)0x100000;
+
+
+
+void main(){
+
+
+    gdt_install();
+    idt_install();
+    timer_install(1);
+    keyboard_install();
+
+    clear();
+    set_cursor(16,1);
+    printboot("Khole Boot Manager Version 0.2 (c) Copyright 2017-2018\n");
+    printboot("   ___________________________________________________________________________\n\n");
+    
+    init_gui();
+
+    mount_disk(BootDevice);
+
+    if((read("kernel.bin",buffer))!=0){
+                    set_color(4);
+                    printboot("[*] Erro ao ler arquivo \"kernel/kernel.bin\"");
+		            for(;;);
+                    set_color(0xf);
+            }else puts("   Kernel.bin\n");
+
+    sti();
+
+
+    set_cursor(39,12);
+    int count;
+    for(count =0;count >=0;--count){
+      
+        if(count > 9)printboot("\b\b%i",count);
+        else  if(count == 9)printboot("\b\b%i",count);
+        else printboot("\b%i",count);
+
+        if(count ==0)break;
+        else delay(1000);
+                
+    }
+
+
+	    clear();
+        exet_kernel_i386();
+            
+}

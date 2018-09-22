@@ -1,0 +1,491 @@
+/*
+ * Khole Operating System
+ * ata/ahci.c
+ * 
+ * Copyright (C) 2017,2018 Nelson Cole <nelsoncole72@gmail.com>
+ */
+#include "ata.h"
+#include "ahci.h"
+#include <string.h>
+
+
+HBA_MEM_T *HBA_MEMORY_SPACE;
+uint32_t HBA_BASE = 0x50000;
+
+char *buf;
+uint16_t sata_idtfy[256];
+
+const char *ahci_type[]={
+    0,
+    "SATA",
+    "SATAPI",
+    "SEMB",
+    "PM",
+};
+
+
+static int sata_port_init(HBA_MEM_T *abar);
+
+
+void ahci_init(uint32_t abar)
+{
+
+    memset(&sata,0,sizeof(sata_t)*32);
+
+    HBA_MEMORY_SPACE = (HBA_MEM_T*)abar;
+
+    sata_port_init(HBA_MEMORY_SPACE);
+
+}
+
+
+// Port x Command and Status
+// stop and start
+static void stop_cmd(HBA_PORT_T *port)
+{
+
+    // Clear FIS Receive Enable (FRE)
+	port->cmd &= ~HBA_PxCMD_FRE; 
+
+
+    // Espera pelo FR (bit14) e CR (bit15) terminar
+	while(TRUE)
+	{
+		if (port->cmd &HBA_PxCMD_FR)
+			continue;
+		if (port->cmd &HBA_PxCMD_CR)
+			continue;
+		break;
+	}
+
+    // Apagar o ST (bit0)
+	port->cmd &= ~ HBA_PxCMD_ST;
+ 
+
+}
+
+
+static void start_cmd(HBA_PORT_T *port)
+{
+    // Aguarde ate que o CR (Command List Running (bit15)) ser apagado
+    while((port->cmd &HBA_PxCMD_CR));
+
+    // Define FIS Receive Enable (bit4) and Sart (bit0)
+    port->cmd |= HBA_PxCMD_FRE;
+    port->cmd |= HBA_PxCMD_ST;  
+
+} 
+
+/*
+    
+ *TODO: Configuração do espaço de memória da porta:
+        Antes de reiniciar o espaço de memória da porta,
+        o software deve aguardar que os comandos pendentes atuais terminem,
+        e diga ao HBA que pare de receber o FIS da porta stop_cmd(),
+        no final da configuração do espaço de memória da porta o software pode iniciar um comando start_cmd()
+
+*/
+static void sata_port_confg(HBA_PORT_T *port, void *pbar)
+{
+
+    // Nelson aqui, no bootloader, não há necessidade de mapearmos ou reiniciar os endereços
+
+    // PxCLB, used 1KB
+    // PxFB, used 256Bytes
+
+    stop_cmd(port);
+
+
+    //port->is = (uint32_t) -1; // Clear pending interrupt bits
+
+    port->clb   = HBA_BASE;
+    port->clbu  =0;
+    memset((void*)(port->clb), 0, 1024);
+    
+
+    port->fb    =  port->clb + 1024;
+    port->fbu   =0;
+    memset((void*)(port->fb), 0, 256);
+
+
+    HBA_BASE += 0x800;
+    
+
+    start_cmd(port);
+}
+
+
+// AHCI set command header
+// Command List structure
+// cfis (Host to Device)
+// acmd (atapi command)
+// Physical Region Descriptor Table (PRDT)
+// Command Table
+
+static void sata_set_acmd(HBA_CMD_TBL_T *cmdtable)
+{
+    HBA_ACMD_T *acmd = (HBA_ACMD_T*)(&cmdtable->acmd);
+
+}
+
+static void sata_set_cfis(int satanum,HBA_CMD_TBL_T *cmdtable,uint8_t c,\
+uint8_t command,uint16_t feature,uint64_t lba,uint16_t count,uint8_t ctrl)
+{
+    uint32_t data =0;
+
+    H2D_REGISTER_FIS_T *cfis = (H2D_REGISTER_FIS_T*)(&cmdtable->cfis);
+    HBA_ACMD_T *acmd = (HBA_ACMD_T*)(&cmdtable->acmd);
+
+    cfis->fis_type = FIS_TYPE_REG_H2D;
+    cfis->pmport = 0;
+    cfis->rsv0 = 0;
+    cfis->c = c;       
+    cfis->icc = 0;
+
+    cfis->command = command;
+    cfis->control = ctrl;
+ 
+    switch(sata[satanum].type){
+
+    case AHCI_DEV_SATA:
+    cfis->featurel =feature &0xff;
+    cfis->lba0 = lba &0xff;
+    cfis->lba1 = (lba >>8) &0xff;
+    cfis->lba2 = (lba >>16) &0xff;
+    cfis->device  = 1<<6;	// LBA mode;
+    cfis->lba3 = (lba >>24) &0xff;
+    cfis->lba4 = (lba >>32) &0xff;
+    cfis->lba5 = (lba >>40) &0xff;
+    cfis->featureh = (feature >> 8) &0xff;
+    cfis->countl = count &0xff;
+    cfis->counth = (count >>8) &0xff;
+    break;
+
+    case AHCI_DEV_SATAPI:
+    // Aqui configura SATAPI
+    // Modo PIO = 0, Modo DMA = 1
+    cfis->featurel = feature &0xff;
+    cfis->featureh = (feature >> 8) &0xff;
+
+    data = sata[satanum].bps;
+    // Size bytes per sector
+    cfis->lba0 = data &0xff;
+    cfis->lba1 = (data >>8) &0xff;
+
+    cfis->device  = 1<<6;	// LBA mode;
+
+    acmd->packet[0] = ATAPI_CMD_READ;
+    acmd->packet[1] = 0;
+    acmd->packet[2] = (lba >>24) &0xff;
+    acmd->packet[3] = (lba >>16) &0xff;
+    acmd->packet[4] = (lba >>8) &0xff;
+    acmd->packet[5] = lba &0xff;
+    acmd->packet[6] = 0;
+    acmd->packet[7] = 0;
+    acmd->packet[8] = 0;
+    acmd->packet[9] = count &0xff;
+    acmd->packet[10]= 0;
+    acmd->packet[11]= 0;
+
+    break;
+
+    }
+
+     
+}
+
+static void sata_set_prdt(HBA_CMD_TBL_T *cmdtblbase,void *dba,uint32_t dbc)
+{
+
+    // Vamos trabalhar com apenas uma entrada 4MB no max
+
+    cmdtblbase->prdt_entry[0].dba = (uint32_t)dba;
+    cmdtblbase->prdt_entry[0].dbau = 0;
+    cmdtblbase->prdt_entry[0].rsv0 = 0;
+    cmdtblbase->prdt_entry[0].dbc = dbc;
+    cmdtblbase->prdt_entry[0].rsv1 = 0;
+    cmdtblbase->prdt_entry[0].i = 1;
+
+}
+static void sata_set_cmdHeader(HBA_PORT_T *port,int satanum,HBA_CMD_HEADER_T *cmdbase,char cfl,char w,char p,\
+char r,char b,uint32_t prdtl,uint32_t prdbc)
+{
+    cmdbase->cfl = cfl;
+    cmdbase->a = (sata[satanum].type == AHCI_DEV_SATAPI)? 1 :0;
+    cmdbase->w = w;
+    cmdbase->p = p;
+    cmdbase->r = r;
+    cmdbase->b = b;
+    cmdbase->c = 0; //TODO Clear busy com o R_OK (HBA_PORT.tfd)
+    cmdbase->rsv0 = 0;
+    cmdbase->pmp = 0;
+    cmdbase->prdtl = prdtl;
+    cmdbase->prdbc = prdbc;
+    cmdbase->ctba  = port->fb + 256; // TODO
+    cmdbase->ctbau = 0;
+   
+}
+
+// Usaremos um comando ATA_IDENTIFY
+static int ahci_ata_indentify(HBA_PORT_T *port,char command,char pmp,void *buf)
+{
+    // Spin lock timeout counter
+    int spin = 0;
+    int slot = 0;
+
+    // Redefinir registo de interrupção de porta 
+    port->is = (uint32_t) -1;
+
+
+    // Received FIS
+    HBA_FIS_T *rfis = (HBA_FIS_T*)(port->fb);
+
+    // Defina o comando de cabeçalho ou slot e configura
+    HBA_CMD_HEADER_T *cmdheader0 = (HBA_CMD_HEADER_T*)(port->clb);
+    sata_set_cmdHeader(port,0,cmdheader0,(sizeof(H2D_REGISTER_FIS_T)/sizeof(uint32_t)),0,0,0,0,1,0);
+    
+    // Defina Comando de tabela
+    HBA_CMD_TBL_T *cmdtable = (HBA_CMD_TBL_T*)(cmdheader0->ctba);
+    memset(cmdtable,0,sizeof(HBA_CMD_TBL_T) +(cmdheader0->prdtl-1)*sizeof(HBA_PRDT_ENTRY_T));
+    
+    // Configura a PRDT
+    sata_set_prdt(cmdtable,buf,512 -1);
+
+    // Configure o Comando FIS
+    H2D_REGISTER_FIS_T *cfis = (H2D_REGISTER_FIS_T*)(&cmdtable->cfis);
+    HBA_ACMD_T *acmd = (HBA_ACMD_T*)(&cmdtable->acmd);
+
+    cfis->fis_type = FIS_TYPE_REG_H2D;
+    cfis->pmport = pmp;
+    cfis->c = 1;
+    cfis->device = 0xE0;
+    cfis->command = command;
+
+    // command issue
+    port->ci = 1 << slot;
+    
+    // Espera o comando completar
+	while ((port->tfd & (ATA_SR_BSY | ATA_SR_DRQ)) && spin < 1000000)
+	{
+        if(port->tfd &ATA_SR_ERR)
+        {
+        	printf("SATAx Read disk CMD ATA IDENTIFY error\n");
+		return (int) -1;
+        
+        }
+		spin++;
+	}
+	if (spin == 1000000)
+	{
+		puts("Portx is hung\n");
+		return (int) -1;
+	}
+
+
+    // Verificar bit de erro no port.is
+
+    while(TRUE){
+
+        if((port->ci & (1<<slot)) == 0)break;
+        if (port->is &HBA_PxIS_TFES){
+            // Task file error
+	        printf("SATAx Read disk CMD ATA IDENTIFY error\n");
+		return (int) -1;
+        }
+    }
+
+    if (cmdheader0->prdbc != 512){
+	        printf("SATAx Read disk CMD ATA IDENTIFY error ---\n");
+		return (int) -1;
+    }
+
+    return (int) 0;
+            
+
+}
+
+static int sata_identify(HBA_PORT_T *port, int satanum)
+{
+    	uint32_t ssts = port ->ssts;
+    	uint8_t ipm = (ssts >> 8) & 0x0F;
+	uint8_t det = ssts & 0x0F;
+
+    	int snpm    = 0;
+    	int stype   = 0;
+    	int sbps    = 0;
+    	int slba    = 0;
+    	int smts    = 0;
+
+    // Check drive status
+    if (det != HBA_PORT_DET_PRESENT)
+		return (-1);
+	if (ipm != HBA_PORT_IPM_ACTIVE)
+		return (-1);
+
+    if(port->sig == SATA_SIG_ATA){
+        stype = AHCI_DEV_SATA;
+        sbps  = 512;
+
+        ahci_ata_indentify(port,ATA_CMD_IDENTIFY_DEVICE,0,&sata_idtfy);
+
+    }else if(port->sig == SATA_SIG_ATAPI){
+        stype = AHCI_DEV_SATAPI;
+        sbps  = 2048;
+    
+        ahci_ata_indentify(port,ATA_CMD_IDENTIFY_PACKET_DEVICE,0,&sata_idtfy);
+    
+        
+    }else if(port->sig == SATA_SIG_SEMB){
+        stype = AHCI_DEV_SEMB;
+        sbps  = 0;
+ 
+
+    }else if(port->sig == SATA_SIG_PM){
+        stype = AHCI_DEV_PM;
+        sbps  = 0;
+           
+    }else{
+        printf("SATA%d device not found\n",satanum);
+        return (-1);
+    }
+
+    printf("SATA%d device type: %s\n",satanum,ahci_type[stype]);
+       
+    sata[satanum].np   = satanum;
+    sata[satanum].npm  = snpm;
+    sata[satanum].type = stype;
+    sata[satanum].bps  = sbps;
+    sata[satanum].mts  = ATA_DMA_MODO;    // PIO = 0, DMA = 1
+    sata[satanum].lba  = ATA_LBA48;    // LBA28 or LBA48
+    return (0);
+
+}
+
+// Serial ATA, detected devices
+static int sata_port_init(HBA_MEM_T *abar){
+    
+    char total_np = (abar->cap &0x1f);
+    char pi = abar->pi;
+    int  i;
+
+    for(i =0;i <= total_np;i++)
+    {
+       sata_port_confg(&abar->ports[i],0);       
+       sata_identify(&abar->ports[i],i);
+
+    }  
+    return (0);    
+
+}
+
+
+// Em nossa implementação, consideramos em apenas o uso de um único slot
+// e uma PRDT (4MB) a cada pedido de acesso de transferência
+static int ahci_read(int satanum,HBA_PORT_T *port, uint64_t lba, uint32_t count,void *buf)
+{
+    // Spin lock timeout counter
+    int spin = 0;
+    int slot = 0;
+
+
+    // Redefinir registo de interrupção de porta 
+    port->is = (uint32_t) -1;
+
+
+    // Received FIS
+    HBA_FIS_T *rfis = (HBA_FIS_T*)(port->fb);
+
+    // Defina o comando de cabeçalho ou slot e configura
+    HBA_CMD_HEADER_T *cmdheader0 = (HBA_CMD_HEADER_T*)(port->clb);
+    sata_set_cmdHeader(port,satanum,cmdheader0,(sizeof(H2D_REGISTER_FIS_T)/sizeof(uint32_t)),0,0,0,0,1,0);
+    
+    // Defina Comando de tabela
+    HBA_CMD_TBL_T *cmdtable = (HBA_CMD_TBL_T*)(cmdheader0->ctba);
+	memset(cmdtable,0,sizeof(HBA_CMD_TBL_T) +(cmdheader0->prdtl -1)*sizeof(HBA_PRDT_ENTRY_T));
+    
+    // Configura a PRDT
+    sata_set_prdt(cmdtable,buf,(count *sata[satanum].bps) -1);
+    
+
+    // Configure o Comando FIS
+
+    switch(sata[satanum].type)
+    {
+        case AHCI_DEV_SATA:
+            if((sata[satanum].mts == ATA_DMA_MODO))
+            sata_set_cfis(satanum,cmdtable,1,ATA_CMD_READ_DMA_EXT,0,lba,count,0);
+    break;
+        case AHCI_DEV_SATAPI:
+            if(sata[satanum].mts == ATA_DMA_MODO)
+            sata_set_cfis(satanum,cmdtable,1,ATA_CMD_PACKET,1 /*feature*/,lba,count,0);     
+    break;
+    }
+
+    // Command issue
+    port->ci = 1 << slot;
+    
+    // Espera o comando completar
+	while ((port->tfd & (ATA_SR_BSY | ATA_SR_DRQ)) && spin < 1000000)
+	{
+        if(port->tfd &ATA_SR_ERR)
+        {
+        	printf("SATA%d Read disk error\n",satanum);
+		    return (int) -1;
+        
+        }
+		spin++;
+	}
+	if (spin == 1000000)
+	{
+		printf("Port%d is hung\n",satanum);
+		return (int) -1;
+	}
+
+
+    // Verificar bit de erro no port.is
+
+    while(true){
+
+        if((port->ci & (1<<slot)) == 0)break;
+        if (port->is &HBA_PxIS_TFES){
+            // Task file error
+	        printf("SATA%d Read disk error\n",satanum);
+		    return (int) -1;
+        }
+    }
+
+    // Verifique se todos bytes foram transferidos    
+    if (cmdheader0->prdbc != (count*sata[satanum].bps)){
+	        // printf("SATA%d Read disk error---\n",satanum);
+		    return (int) 0; //-1;
+    }
+    
+    return (int) 0;
+            
+
+}
+static int ahci_write(int satanum,HBA_PORT_T *port, uint64_t lba, uint32_t count,void *buf)
+{
+    // Spin lock timeout counter
+    int spin = 0;
+    int slot = 0;
+
+    // Redefinir registo de interrupção de porta 
+    port->is = (uint32_t) -1;
+
+            
+
+}
+
+int sata_read_sector(int satanum,uint64_t lba, uint32_t count,void *buf)
+{
+
+    return (int) ahci_read(satanum,&HBA_MEMORY_SPACE->ports[satanum],lba,count,buf);
+    
+}
+int sata_write_sector(int satanum,uint64_t lba, uint32_t count,void *buf)
+{
+
+    return (int) ahci_write(satanum,&HBA_MEMORY_SPACE->ports[satanum],lba,count,buf);
+    
+}

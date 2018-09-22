@@ -1,0 +1,11 @@
+#ifndef __PCI_H__
+#define __PCI_H__
+#include <typedef.h>
+#define MAX_BUS 2  // 256
+#define MAX_DEV 32 // 32
+#define MAX_FUN 8  // 8
+#define PCI_MSG_ERROR       -1
+#define PCI_MSG_AVALIABLE   0x80
+#define PCI_MSG_SUCCESSFUL  0
+
+#endif

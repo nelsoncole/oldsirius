@@ -1,0 +1,54 @@
+#include <io.h>
+#include <drivers/pci.h>
+#include <dev.h>
+#include <string.h>
+
+static int gpu_pci(int bus,int dev,int fun);
+void gpu()
+{
+
+	uint32_t data = pci_scan_bcc(3);
+
+	if(data == -1) {
+		set_color(0x4);
+		printf("PCI PANIC: Display Controller not found!\n");set_color(0xf);
+		return -1;
+	}
+
+
+	
+
+	data = gpu_pci(data  >>  8 &0xff,data  >> 3  &31,data &7);
+
+
+
+
+}
+
+static int gpu_pci(int bus,int dev,int fun)
+{
+	printf("PCI Display Controller Initialize\n");
+	uint32_t data = 0;
+	uint32_t z0 = (fun &0xff) | ((dev &0xff) << 8) | ((bus &0xff) << 16);
+	pci_t *pci = (pci_t*)((uint32_t)&z0);
+	
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x00);
+	printf("Device ID: %X Vendor ID: %X\n",data >>16 &0xffff,data &0xffff);
+	
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x10);
+	printf("BAR0: %X\n",data);
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x14);
+	printf("BAR1: %X\n",data);
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x18);
+	printf("BAR2: %X\n",data);
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x1C);
+	printf("BAR3: %X\n",data);
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x20);
+	printf("BAR5: %X\n",data);
+	data = pci_read_config_dword(pci->bus,pci->dev,pci->fun,0x24);
+	printf("BAR5: %X\n",data);
+
+
+
+	return 0;
+}

@@ -1,0 +1,50 @@
+#include <io.h>
+#include <string.h>
+#include <memory.h>
+uint32_t used_page_directory = 0;
+uint32_t used_page_tables = 0;
+
+extern uint8_t bootdevice_num;
+
+void mboot_info(uint32_t arg)
+{
+
+	uint32_t *p = (uint32_t*)arg;
+	int i;
+
+
+	// Base Address Register
+	(*(uint32_t*)(p + 0 )) = 0; // Magic
+	(*(uint32_t*)(p + 4 )) = 0x101000; // Boot Device
+	(*(uint32_t*)(p + 8 )) = 0x101100; // PCI Device
+	(*(uint32_t*)(p + 12 )) = 0x102000; // BIOS VESA (video end audio)
+	(*(uint32_t*)(p + 16)) = 0x103000; // Physical Memory Map
+	(*(uint32_t*)(p + 20)) = 0x200000; // Page directory
+	(*(uint32_t*)(p + 24)) = 0x201000; // Page tables
+	// Virtual Memory
+	(*(uint32_t*)(p + 4084)) = 256 *1024; // Total Page Table
+	(*(uint32_t*)(p + 4088)) = used_page_directory;
+	(*(uint32_t*)(p + 4092)) = used_page_tables;
+
+
+
+	// Boot Device (BIOS Enhanced Disk Drive Services)
+	// Device register
+	// Channel number
+	// Host bus type
+	// Interface type
+	// MBR Patition 
+	(*(uint8_t*)(p + 0x1000)) = bootdevice_num &0xff;
+
+	
+	// Physical Memoey Map (INT 0x15 AX,E820h)
+	// 8 bytes RAM SIZE 
+	(*(uint32_t*)(p + 0x3000 )) = 0;
+	for (i = 2; i < used_page_directory +2; i++)
+	(*(uint32_t*)(p + 0x3000 + (i*4))) = 0xFFFFFFFF;
+
+
+
+
+}
+

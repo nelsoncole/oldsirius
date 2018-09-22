@@ -1,0 +1,23 @@
+# Khole Operating System
+# Khole/ata/doc
+# 29/04/2018 @ 05:59 PM
+# Copyright (C) 2017,2018 Nelson Sapalo da Silva Cole <nelsoncole72@gmail.com>
+
+
+Objectivo:
+Implementar um driver de discos Parallel/Serial ATA, em modo IDE ou  AHCI.
+
+Organização dos fontes:
+1) – ata.c, ata.h
+2) – ahci.c, ahci.h
+3) – ide.c, ide.h
+
+
+Descrição:
+O PCI Software, deve detectar uma Class code 1 e Sub Class code 1 para IDE ou Sub Class code 6 para o AHCI, por maior segurança, o PCI Software também deve verificar o Device ID, para se ter a certeza de que é mesmo um dispositivo IDE ou AHCI. O IDE usa os BARs 0 – 4, o AHCI usa o BAR5, também tratado por ABAR, ao mesmo tempo usando como opcional os BARs 0-4, por motivos de compatibilidade. 
+O IDE controla unidades ATA e SATA em poucos casos.
+O AHCI é o novo padrão para o controle de unidades SATA   
+
+
+
+

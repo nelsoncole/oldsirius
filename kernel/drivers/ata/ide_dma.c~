@@ -1,0 +1,79 @@
+/**
+ * Copyright (C) 2017-2018 (Nelson Sapalo da Silva Cole)
+ * Khole OS v0.3
+ * Legacy Bus Master Base Address
+ *
+ *  TODO Nelson, ja mais se esqueça de habiliatar o // Bus Master Enable
+ *  no espaço de configuraçao PCI (offset 0x4 Command Register)
+ */
+#include "ata.h"
+
+
+struct {
+    uint32_t    addr;
+    uint32_t    len;
+}ide_dma_prdt[4];
+
+
+void ide_dma_data(void *addr,uint16_t byte_count,uint8_t flg,uint8_t nport)
+{
+    uint8_t data;
+           
+    ide_dma_prdt[nport].addr   = (uint32_t)addr &~1; //sera que e necessario?
+    ide_dma_prdt[nport].len    = (byte_count &~1) |0x80000000;
+
+    // prds physical
+    outpl(ata.bus_master_base_address + IDE_DMA_REG_ADDR,(uint32_t)&ide_dma_prdt[nport]);
+
+
+
+
+    //bit 3 read/write
+    // attr RWC
+    //      0 = Memory reads
+    //      1 = Memory writes
+    data = inb(ata.bus_master_base_address + IDE_DMA_REG_CMD);
+
+    switch(flg)
+    {
+        case IDE_DMA_BUS_READ: 
+        outb(ata.bus_master_base_address + IDE_DMA_REG_CMD, data | IDE_DMA_BUS_RE_WR);
+    break;
+        case IDE_DMA_BUS_WRITE: 
+        outb(ata.bus_master_base_address + IDE_DMA_REG_CMD, data &~ IDE_DMA_BUS_RE_WR);
+    break;
+    }
+
+
+    // Clear the Interrupt bit and Error bit in the Status register
+    // attrs RWC
+    data = inb(ata.bus_master_base_address + IDE_DMA_REG_STS);
+    outb(ata.bus_master_base_address + IDE_DMA_REG_STS, data | 6);
+
+    
+    
+}
+
+
+void ide_dma_start()
+{
+    // bit 0 srtat/stop
+    uint8_t data = inb(ata.bus_master_base_address + IDE_DMA_REG_CMD);
+    outb(ata.bus_master_base_address + IDE_DMA_REG_CMD, data | IDE_DMA_BUS_ST_SP);
+
+}
+
+void ide_dma_stop()
+{
+    uint8_t data = inb(ata.bus_master_base_address + IDE_DMA_REG_CMD);
+    outb(ata.bus_master_base_address + IDE_DMA_REG_CMD, data &~ IDE_DMA_BUS_ST_SP);
+    // Clear the Interrupt bit and Error bit in the Status register
+    data = inb(ata.bus_master_base_address + IDE_DMA_REG_STS);
+    outb(ata.bus_master_base_address + IDE_DMA_REG_STS, data | 6);
+
+}
+
+int ide_dma_read_status()
+{
+    return inb(ata.bus_master_base_address + IDE_DMA_REG_STS);
+}

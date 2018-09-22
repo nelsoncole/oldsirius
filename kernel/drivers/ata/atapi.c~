@@ -1,0 +1,128 @@
+/**
+ * Copyright (C) 2017-2018 (Nelson Sapalo da Silva Cole)
+ * Khole OS v0.3
+ *
+ */
+#include "ata.h"
+
+
+extern st_dev *current_dev;
+extern uint8_t *dma_addr;
+
+static inline void atapi_pio_read(void *buffer,uint32_t bytes)
+{
+__asm__ __volatile__(\
+                "cld;\
+                 rep; insw"::"D"(buffer),\
+                "d"(ata.cmd_block_base_address + ATA_REG_DATA),\
+                "c"(bytes/2));
+
+}
+
+int atapi_read_sector(char nport,uint16_t count,uint64_t addr,void *buffer)
+{
+
+    uint32_t sector_size = current_dev->dev_byte_per_sector;
+    uint8_t  modo_atapi  = 0;
+    char atapi_packet [] ={ATAPI_CMD_READ,0,0,0,0,0,0,0,0,0,0,0};
+
+    
+    ata_assert_dever(nport); //FIXME
+    if(current_dev->dev_modo_transfere == ATA_DMA_MODO)
+        switch(nport){
+            case 0: dma_addr = (_u8*)DMA_PHYS_ADDR0;
+                    break;
+            case 1: dma_addr = (_u8*)DMA_PHYS_ADDR1;
+                    break;
+            case 2: dma_addr = (_u8*)DMA_PHYS_ADDR2;
+                    break;
+            case 3: dma_addr = (_u8*)DMA_PHYS_ADDR3;
+                    break;
+
+    }
+    
+    
+    
+
+    // configurar o pacote SCSI, 
+    // 12 bytes de tamanho
+    // Use LBA28
+    atapi_packet [ 0x02 ] = ( addr >> 24 ) & 0xff ;
+    atapi_packet [ 0x03 ] = ( addr >> 16 ) & 0xff ;
+    atapi_packet [ 0x04 ] = ( addr >> 8 ) & 0xff ;
+    atapi_packet [ 0x05 ] = ( addr) & 0xff ;
+    atapi_packet [ 0x09 ] = (count);
+    
+    // Seleccionar a unidade
+    outb(ata.cmd_block_base_address + ATA_REG_DEVSEL,0x40 | ata.dev_num << 4);
+    // verifique se e a mesma unidade para nao esperar
+    if(ata_record_dev != ata.dev_num && ata_record_channel != ata.channel){
+            ata_wait(400); // 400 ns
+            ata_record_dev      = ata.dev_num;
+            ata_record_channel  = ata.channel;
+    }
+
+    // Selecionar modo ATAPI
+    // 0 = Modo PIO.
+    // 1 = DMA or UDMA
+    if( current_dev->dev_modo_transfere == ATA_DMA_MODO){
+
+        modo_atapi = 1;
+        sector_size =0;
+    } 
+    outb(ata.cmd_block_base_address + ATA_REG_FEATURES,modo_atapi); // Modo PIO or DMA
+
+    // Defina o tamanho do buffer em LBA0 e LBA1
+    // O tamanho do bytes por sector
+     outb(ata.cmd_block_base_address + ATA_REG_LBA0,sector_size &0xff);   // LBA 7-0   
+	 outb(ata.cmd_block_base_address + ATA_REG_LBA1,sector_size >> 8);   // LBA 15-8
+
+    // Enviar comando PACKET
+    ata_cmd_write(ATA_CMD_PACKET);
+    if(modo_atapi == 0)ata_wait_irq(current_dev->irq); //FIXME IRQs
+    else{ 
+    if(ata_wait_not_busy() != 0)return -1;
+    
+                
+    
+    }
+
+    if(ata_wait_drq() != 0)return -1;
+    // Enviar os dados do pacote
+    __asm__ __volatile__("cld; rep; outsw" ::"c" (6) , "d" (\
+    (ata.cmd_block_base_address +ATA_REG_DATA)),"S"(atapi_packet));
+ 
+    if(ata_wait_drq() != 0)return -1; //TODO Nelson e mesmo correcto DRQ aqui?
+
+    if( current_dev->dev_modo_transfere == ATA_DMA_MODO){
+
+
+           
+            ide_dma_data(buffer,current_dev->dev_byte_per_sector*count,0x0,nport);    
+
+            ide_dma_start();
+
+            ata_wait_irq(current_dev->irq);
+
+            while(ide_dma_read_status() &1)
+            if(ide_dma_read_status() &2){
+            ide_dma_stop(); 
+            return -1;
+            } 
+
+            ide_dma_stop();
+            __asm__ __volatile__("cld; rep; movsd;"::"D"(buffer),\
+            "S"(dma_addr),"c"((current_dev->dev_byte_per_sector*count)/4));
+     
+
+     return 0;
+
+
+    }
+    
+    atapi_pio_read(buffer,sector_size);
+    ata_wait_irq(current_dev->irq);
+    // Verifica erros
+    
+    return 0;
+}

@@ -1,0 +1,11 @@
+#Sirius OS
+#Este e o arquivo boot.lst
+#
+#
+#
+<load>
+title:=Sirius Operating System v1.0;
+kernel:=/kernel/kenrl.elf;
+root:=cd
+partition:=0;
+</end>

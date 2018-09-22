@@ -1,0 +1,31 @@
+#ifndef __PART_H__
+#define __PART_H__
+#include <typedef.h>
+
+#define PARTITION_FAT 0x80
+
+
+struct part{
+
+    char     	id[2];
+    uint8_t     dev_num;
+    uint8_t     type;
+    uint32_t    total_space;
+    uint32_t    free_space;
+    uint32_t    busy_space;
+    char     	name[32];
+
+}part[32];
+
+
+//part.c
+void part_initialize();
+int mout_dev(int dev);
+int indexpart(char *s);
+
+
+
+
+
+
+#endif
